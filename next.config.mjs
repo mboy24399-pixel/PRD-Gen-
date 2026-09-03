@@ -1,13 +1,12 @@
 /** @type {import('next').NextConfig} */
+const isPages = process.env.GITHUB_ACTIONS === 'true';
+const repoName = (process.env.GITHUB_REPOSITORY || '').split('/')[1] || 'PRD-Gen-';
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  experimental: { typedRoutes: true },
-  headers: async () => [{ source: '/(.*)', headers: [
-    { key:'X-Content-Type-Options', value:'nosniff' },
-    { key:'Referrer-Policy', value:'strict-origin-when-cross-origin' },
-    { key:'X-Frame-Options', value:'DENY' },
-    { key:'Permissions-Policy', value:'camera=(), microphone=(), geolocation=()' }
-  ]}]
+  output: 'export',
+  trailingSlash: true,
+  basePath: isPages ? `/${repoName}` : '',
+  images: { unoptimized: true },
 };
 export default nextConfig;
