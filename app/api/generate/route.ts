@@ -1,4 +1,4 @@
-import { handle } from '../../../..//lib/gateway';
+import { handle } from '../../../lib/gateway';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
