@@ -1,31 +1,39 @@
 {
-  "name": "prd-forge",
-  "version": "2.0.0",
+  "name": "prd-forge-deterministic",
+  "version": "3.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@tiptap/extension-placeholder": "^2.11.5",
+    "@tiptap/react": "^2.11.5",
+    "@tiptap/starter-kit": "^2.11.5",
+    "@xyflow/react": "^12.8.6",
     "clsx": "^2.1.1",
+    "dexie": "^4.0.11",
+    "framer-motion": "^11.18.2",
+    "html2pdf.js": "^0.10.3",
     "lucide-react": "^0.468.0",
     "next": "^14.2.35",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tailwind-merge": "^2.5.5",
-    "zod": "^3.25.76"
+    "zustand": "^5.0.3",
+    "zod": "^3.25.76",
+    "docx": "^9.2.0",
+    "file-saver": "^2.0.5"
   },
   "devDependencies": {
+    "@types/file-saver": "^2.0.7",
+    "@types/html2pdf.js": "^0.10.0",
     "@types/node": "^20.17.30",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
-    "@vercel/node": "^5.3.21",
     "autoprefixer": "^10.4.20",
-    "eslint": "^8.57.1",
-    "eslint-config-next": "^14.2.35",
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.8.2"
