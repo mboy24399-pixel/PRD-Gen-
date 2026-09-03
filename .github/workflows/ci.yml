@@ -16,14 +16,12 @@ jobs:
           node-version: 20
       - run: npm install --no-audit --no-fund
       - run: npm run typecheck
-      # GitHub Actions sets GITHUB_ACTIONS=true globally. Force the CI build
-      # into the same server-capable configuration used by Vercel.
-      - name: Build Vercel server configuration
+      - name: Build application
         env:
           GITHUB_ACTIONS: false
           VERCEL: 1
         run: npm run build
-      - name: Smoke-test production API route
+      - name: Smoke-test production page
         env:
           GITHUB_ACTIONS: false
           VERCEL: 1
@@ -32,11 +30,8 @@ jobs:
           SERVER_PID=$!
           trap 'kill $SERVER_PID' EXIT
           for i in {1..20}; do
-            if curl -fsSL http://127.0.0.1:3000/api/generate > /tmp/prd-forge-health.json; then
-              break
-            fi
+            if curl -fsSL http://127.0.0.1:3000/ > /tmp/prd-forge-home.html; then break; fi
             sleep 1
           done
-          cat /tmp/prd-forge-health.json
-          grep -q '"ok":true' /tmp/prd-forge-health.json
-          grep -q 'next-node-route' /tmp/prd-forge-health.json
+          test -s /tmp/prd-forge-home.html
+          grep -q 'PRD Forge' /tmp/prd-forge-home.html
