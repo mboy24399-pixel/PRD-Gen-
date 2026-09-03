@@ -1,70 +1,108 @@
-# PRD Forge
+# PRD Forge — Deterministic Edition
 
-**PRD Forge** is a GitHub Pages-first AI PRD workspace: guided product intake, Gemini streaming generation, multi-key failover, local project library, autosave, version snapshots, Markdown editing, workspace backup, and exports.
+PRD Forge is a **100% manual, deterministic, offline-first PRD generator**. It has no AI API, no LLM, no provider key, no server database and no network generation path.
 
-## Live architecture
+## Phase 1 — Architecture Blueprint
 
-This repository is intentionally built for **GitHub Pages only**. GitHub Pages is static hosting, so there is no server runtime in the deployed site.
+```text
+app/
+  layout.tsx
+  page.tsx
+  globals.css
+components/
+  ArchitectureBuilder.tsx
+lib/
+  db.ts          # Dexie / IndexedDB persistence
+  engine.ts      # deterministic routing + estimation
+  store.ts       # Zustand state machine
+  compiler.ts    # state → Markdown/HTML
+  export.ts      # browser-only PDF/DOCX/MD/JSON
+public/
+types/
+  vendor.d.ts
+.github/workflows/
+  ci.yml
+  deploy-pages.yml
+```
 
-- Next.js 14 static export
-- TypeScript + Tailwind CSS
-- Browser-only Gemini REST streaming
-- BYOK Gemini keys held in memory only
-- Multiple-key rotation on 401 / 403 / 429
-- LocalStorage project library and 20-second autosave
-- Local JSON workspace backup/import
-- Markdown, TXT, HTML, DOCX export
-- Browser Print → Save as PDF
-- GitHub Actions build + GitHub Pages deployment
+Core runtime: Next.js App Router + React + TypeScript + Tailwind CSS. State is Zustand. Persistence is Dexie/IndexedDB. Architecture uses React Flow. Manual editing uses TipTap. Motion uses Framer Motion. Exports execute in the browser.
 
-GitHub Pages supports custom GitHub Actions workflows for static site generators, which is the deployment model used here.
+## Phase 2 — State & Logic Engine
 
-## Security model
+`lib/store.ts` owns the 20-step state machine. `lib/engine.ts` owns deterministic rules. Selecting **E-commerce** in Step 7 immediately merges a catalog containing 50+ technical capabilities, 20 schema tables and 25 API routes into the current PRD state. SaaS and Marketplace routing are also included.
 
-A static GitHub Pages site cannot keep a user-supplied Gemini API key secret from the browser. Therefore PRD Forge does **not** pretend to encrypt a client-side secret or ship a hidden server key.
+The estimator is mathematical rather than model-generated:
 
-Instead:
+- feature complexity points
+- schema and endpoint complexity
+- configurable risk adjustment
+- team skill multiplier
+- duration in weeks
+- recommended team size
+- budget range
 
-1. The user enters their own Gemini key in the session.
-2. The key is kept only in JavaScript memory.
-3. The key is never placed in source control, localStorage, cookies, or this project's database.
-4. Requests go directly to Google's Gemini API.
-5. Multiple keys can be loaded and rotated automatically when a key is rejected or rate-limited.
-6. Users should use restricted/auth keys and Google quota/billing controls.
+No randomness is used for the resulting estimate.
 
-Never commit a Gemini API key to GitHub.
+## Phase 3 — Core UI
 
-## Current Gemini models
+The application includes:
 
-The app uses stable `gemini-2.5-flash` for Quick Draft and stable `gemini-2.5-pro` for Standard/Detailed generation. These are current supported model IDs in Google's Gemini API documentation.
+- 20-step dynamic wizard
+- domain routing buttons
+- feature catalog
+- technology/security/observability/performance checklists
+- visual drag/drop architecture canvas
+- editable database tables
+- editable API routes
+- integration planner
+- branding panel with colors, typography scale and logo upload
+- responsive dark premium UI with animated step transitions
 
-## Local development
+## Phase 4 — Document Compilation & Editor
+
+`lib/compiler.ts` converts the full Zustand state into a deterministic Markdown PRD containing strategy, requirements, architecture, schema, API planning, security, observability, reliability, QA, delivery, risks and the calculated estimate.
+
+The compiled document opens in a TipTap editor for manual refinement.
+
+## Phase 5 — Client-Side Export & Deployment
+
+Exports are browser-only:
+
+- Markdown
+- JSON workspace
+- Microsoft Word `.docx`
+- PDF via `html2pdf.js`
+
+### Run locally
 
 ```bash
 npm install
 npm run dev
 ```
 
-For production static output:
+### Production check
 
 ```bash
+npm run typecheck
+npm run build
+npm run start
+```
+
+### Vercel
+
+Import the GitHub repository into Vercel. No server environment variables are required.
+
+### Netlify
+
+```bash
+npm install
 npm run build
 ```
 
-The static site is emitted to `out/`.
+Publish the generated `out/` directory when using static export mode.
 
-## GitHub Pages
+## Data and security
 
-The repository contains `.github/workflows/deploy-pages.yml`. After GitHub Pages is configured to use **GitHub Actions** as its source, pushes to `main` build and deploy the `out/` directory automatically.
+Project data stays in the browser's IndexedDB. Uploaded branding assets are kept in application state and local persistence only. There are no API credentials to leak because the deterministic engine never calls an AI/provider service.
 
-Expected site:
-
-`https://mboy24399-pixel.github.io/PRD-Gen-/`
-
-## Important scope boundary
-
-The original product brief includes server-side authentication, encrypted server key storage, Supabase/Postgres, Redis, real-time collaboration, comments, teams, and server-generated exports. Those features require a server-side runtime or managed backend and therefore cannot be implemented honestly as secure runtime features on GitHub Pages alone.
-
-This version deliberately prioritizes a **real, deployable, secure-by-design static product** instead of pretending those backend capabilities exist.
-
-The architecture is kept modular so a future backend can add accounts, cloud persistence, collaboration, and server-side Gemini proxying without changing the core PRD document format.
+This design intentionally removes the previous provider gateway and browser fetch bridge. Search the repository for provider API keys or `/api/generate`; neither is part of the deterministic architecture.
