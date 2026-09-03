@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 
 function looksLikeChunkFailure(error: Error) {
@@ -9,8 +9,6 @@ function looksLikeChunkFailure(error: Error) {
 }
 
 export default function Error({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
-  const attemptedRecovery = useRef(false);
-
   useEffect(() => {
     console.error('PRD Forge client runtime error', error);
 
@@ -34,7 +32,7 @@ export default function Error({ error, reset }: { error: Error & { digest?: stri
         <p className="eyebrow mt-5">Recovery mode</p>
         <h1 className="mt-2 text-2xl font-semibold">PRD Forge hit a recoverable error.</h1>
         <p className="mt-3 text-sm leading-6 text-zinc-500">Your local workspace is kept in the browser. Try again; the last saved draft remains available.</p>
-        <button className="btn btn-primary mt-6" onClick={() => { attemptedRecovery.current = true; reset(); }}><RefreshCw size={15} /> Try again</button>
+        <button className="btn btn-primary mt-6" onClick={() => reset()}><RefreshCw size={15} /> Try again</button>
       </section>
     </main>
   );
