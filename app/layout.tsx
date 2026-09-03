@@ -15,7 +15,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en" suppressHydrationWarning>
       <body>
-        <script src="/forge-bridge.js" defer />
+        <script src="./forge-bridge.js" defer />
         {children}
       </body>
     </html>
