@@ -7,7 +7,6 @@ const PROVIDERS = new Set<Provider>(['gemini', 'openrouter', 'openai', 'anthropi
 const MAX_PROMPT_CHARS = 120_000;
 const MAX_BODY_BYTES = 900_000;
 const RETRYABLE = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
-const ALLOWED_DEFAULT_ORIGINS = ['http://localhost:3000'];
 
 function envKeys(provider: Provider) {
   const prefix = provider === 'custom' ? 'CUSTOM' : provider.toUpperCase();
@@ -15,12 +14,16 @@ function envKeys(provider: Provider) {
     .map((x) => x.trim()).filter(Boolean);
 }
 function originAllowed(req: NextApiRequest) {
+  const body = (req.body || {}) as ReqBody;
+  // Browser BYOK is intentionally allowed cross-origin so the GitHub Pages build can use the Vercel gateway.
+  // Server-managed environment keys remain same-origin/allow-listed only.
+  if (typeof body.apiKey === 'string' && body.apiKey.trim()) return true;
   const origin = typeof req.headers.origin === 'string' ? req.headers.origin : '';
   if (!origin) return true;
   const configured = (process.env.PRD_FORGE_ALLOWED_ORIGINS || '').split(',').map((x) => x.trim()).filter(Boolean);
   if (configured.length) return configured.includes(origin);
   const host = req.headers.host || '';
-  return ALLOWED_DEFAULT_ORIGINS.includes(origin) || origin === `https://${host}` || origin === `http://${host}`;
+  return origin === `https://${host}` || origin === `http://${host}` || origin === 'http://localhost:3000';
 }
 function json(res: NextApiResponse, status: number, payload: unknown) { return res.status(status).json(payload); }
 function safeBaseUrl(provider: Provider, input?: string) {
@@ -58,10 +61,10 @@ async function streamNormalized(res: NextApiResponse, upstream: Response, provid
   while (true) {
     const { value, done } = await reader.read(); buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
     const events = buffer.split(/\n\n|\r\n\r\n/); buffer = events.pop() || '';
-    for (const event of events) { const lines = event.split(/\r?\n/); for (const line of lines) { if (!line.startsWith('data:')) continue; const data=line.slice(5).trim(); if (!data || data==='[DONE]') continue; send(textFromEvent(provider,data)); } }
+    for (const event of events) { for (const line of event.split(/\r?\n/)) { if (!line.startsWith('data:')) continue; const data=line.slice(5).trim(); if (!data || data==='[DONE]') continue; send(textFromEvent(provider,data)); } }
     if (done) break;
   }
-  if (buffer.trim()) { for (const line of buffer.split(/\r?\n/)) { if (!line.startsWith('data:')) continue; const data=line.slice(5).trim(); if(data&&data!=='[DONE]') send(textFromEvent(provider,data)); } }
+  if (buffer.trim()) for (const line of buffer.split(/\r?\n/)) { if (!line.startsWith('data:')) continue; const data=line.slice(5).trim(); if(data&&data!=='[DONE]') send(textFromEvent(provider,data)); }
   res.write('data: [DONE]\n\n'); res.end();
 }
 
@@ -76,8 +79,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const suppliedKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : ''; const keys = suppliedKey ? [suppliedKey] : envKeys(provider); if (!keys.length) return json(res, 400, { error: `No ${provider} API key configured.` });
     const baseUrl = safeBaseUrl(provider, body.baseUrl); let lastStatus = 502; let lastDetail = '';
     for (const key of keys) {
-      const reqSpec = requestFor(provider, model, prompt, baseUrl);
-      const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 90_000);
+      const reqSpec = requestFor(provider, model, prompt, baseUrl); const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 90_000);
       try {
         const upstream = await fetch(reqSpec.url, { method: 'POST', headers: headersFor(provider,key), body: JSON.stringify(reqSpec.body), cache: 'no-store', signal: controller.signal });
         if (upstream.ok && upstream.body) { if (body.test) { clearTimeout(timeout); return json(res, 200, { ok: true, provider, model, message: 'Provider authentication and request path are healthy.' }); } clearTimeout(timeout); return await streamNormalized(res, upstream, provider); }
