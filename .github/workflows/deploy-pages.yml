@@ -32,6 +32,14 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # GitHub Pages is a static host. Keep the production Next.js API route
+      # in the repository for Vercel, but exclude it only from this static build.
+      - name: Exclude server routes from Pages build
+        run: |
+          if [ -d app/api ]; then
+            mv app/api /tmp/prd-forge-app-api
+          fi
+
       - name: Build static site
         env:
           GITHUB_ACTIONS: true
