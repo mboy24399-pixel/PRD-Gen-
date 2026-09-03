@@ -60,7 +60,8 @@ function corsHeaders(request: Request, body: ReqBody) {
 }
 function safeBaseUrl(provider: Provider, input?: string) {
   const defaults: Record<Provider,string>={gemini:'https://generativelanguage.googleapis.com',openrouter:'https://openrouter.ai/api',openai:'https://api.openai.com/v1',anthropic:'https://api.anthropic.com',groq:'https://api.groq.com/openai/v1',mistral:'https://api.mistral.ai/v1',custom:''};
-  const raw=typeof input==='string' && input.trim()?input.trim():defaults[provider]; const value=raw.replace(/\/$/,'');
+  const raw=typeof input==='string' && input.trim()?input.trim():defaults[provider];
+  const value=raw.replace(/\/$/,'');
   if (!value.startsWith('https://') && !value.startsWith('http://localhost')) throw new Error('Provider endpoint must use HTTPS.');
   if (provider==='custom') { const allowed=(process.env.PRD_FORGE_CUSTOM_DOMAINS || '').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean); let host=''; try{host=new URL(value).hostname.toLowerCase();}catch{throw new Error('Invalid custom endpoint URL.');} if(!allowed.length || !allowed.includes(host)) throw new Error('Custom endpoints are locked. Add the domain to PRD_FORGE_CUSTOM_DOMAINS on Vercel.'); }
   return value;
@@ -71,6 +72,11 @@ function headersFor(provider: Provider,key:string): Record<string,string> {
   if(provider==='anthropic') return {...common,'x-api-key':key,'anthropic-version':'2023-06-01'};
   return {...common,Authorization:`Bearer ${key}`};
 }
+function canonicalModel(provider: Provider, model: string) {
+  const clean=model.trim().replace(/^models\//,'');
+  if (provider==='gemini') return clean || 'gemini-2.5-flash';
+  return clean;
+}
 function modelsRequest(provider: Provider,baseUrl:string){return provider==='gemini'?`${baseUrl}/v1beta/models`:`${baseUrl}/models`;}
 function classifyHealth(status:number,modelAvailable:boolean){if(status>=200&&status<300)return modelAvailable?'valid-model':'valid-key-model-unavailable';if(status===401||status===403)return'invalid-or-restricted-key';if(status===404)return'model-endpoint-not-found';if(status===429)return'rate-limited-or-quota';if(status===400)return'provider-rejected-request';return`provider-error-${status}`;}
 function extractProviderDetail(parsed:any,raw:string){return String(parsed?.error?.message||parsed?.message||raw||'Provider rejected the request').replace(/\s+/g,' ').slice(0,500);}
@@ -79,14 +85,15 @@ async function checkKey(provider:Provider,key:string,model:string,baseUrl:string
   try{const upstream=await fetch(url,{method:'GET',headers:headersFor(provider,key),cache:'no-store',signal:controller.signal}); const raw=await upstream.text().catch(()=> ''); let parsed:any=null; try{parsed=JSON.parse(raw);}catch{}
     if(!upstream.ok)return{ok:false,status:upstream.status,health:classifyHealth(upstream.status,false),modelAvailable:false,detail:extractProviderDetail(parsed,raw)};
     const ids=Array.isArray(parsed?.data)?parsed.data.map((x:any)=>String(x?.id||'')).filter(Boolean):Array.isArray(parsed?.models)?parsed.models.map((x:any)=>String(x?.name||'').replace(/^models\//,'')).filter(Boolean):[];
-    const normalizedModel=model.replace(/^models\//,''); const modelAvailable=!!normalizedModel&&(ids.includes(normalizedModel)||ids.includes(`models/${normalizedModel}`));
+    const normalizedModel=canonicalModel(provider,model); const modelAvailable=!!normalizedModel&&(ids.includes(normalizedModel)||ids.includes(`models/${normalizedModel}`));
     return{ok:modelAvailable,status:modelAvailable?upstream.status:404,health:classifyHealth(modelAvailable?upstream.status:404,modelAvailable),modelAvailable,models:ids.slice(0,60),detail:modelAvailable?'':`Selected model ${normalizedModel||'(empty)'} is not available for this API key/provider endpoint.`};
   }catch(e){return{ok:false,status:504,health:'network-or-timeout',modelAvailable:false,detail:e instanceof Error?e.message:'Provider health check failed'};}finally{clearTimeout(timeout);}
 }
 function requestFor(provider:Provider,model:string,prompt:string,baseUrl:string){
-  if(provider==='gemini')return{url:`${baseUrl}/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`,body:{contents:[{role:'user',parts:[{text:prompt}]}],generationConfig:{temperature:0.25,topP:0.9,maxOutputTokens:32000}}};
-  if(provider==='anthropic')return{url:`${baseUrl}/v1/messages`,body:{model,max_tokens:32000,temperature:0.25,stream:true,messages:[{role:'user',content:prompt}]}};
-  return{url:`${baseUrl}/chat/completions`,body:{model,temperature:0.25,top_p:0.9,max_tokens:32000,stream:true,messages:[{role:'user',content:prompt}]}};
+  const normalizedModel=canonicalModel(provider,model);
+  if(provider==='gemini')return{url:`${baseUrl}/v1beta/models/${encodeURIComponent(normalizedModel)}:streamGenerateContent?alt=sse`,body:{contents:[{role:'user',parts:[{text:prompt}]}],generationConfig:{temperature:0.25,topP:0.9,maxOutputTokens:32000}}};
+  if(provider==='anthropic')return{url:`${baseUrl}/v1/messages`,body:{model:normalizedModel,max_tokens:32000,temperature:0.25,stream:true,messages:[{role:'user',content:prompt}]}};
+  return{url:`${baseUrl}/chat/completions`,body:{model:normalizedModel,temperature:0.25,top_p:0.9,max_tokens:32000,stream:true,messages:[{role:'user',content:prompt}]}};
 }
 function textFromEvent(provider:Provider,data:string){try{const j=JSON.parse(data);if(provider==='gemini')return j?.candidates?.[0]?.content?.parts?.map((p:{text?:string})=>p.text||'').join('')||'';if(provider==='anthropic')return j?.type==='content_block_delta'?j?.delta?.text||'':'';return j?.choices?.[0]?.delta?.content||'';}catch{return'';}}
 function streamNormalized(upstream:Response,provider:Provider){
@@ -96,6 +103,19 @@ function streamNormalized(upstream:Response,provider:Provider){
 }
 async function parseBody(request:Request):Promise<ReqBody>{const length=Number(request.headers.get('content-length')||0);if(length>MAX_BODY_BYTES)throw new Error('Request body is too large.');const contentType=request.headers.get('content-type')||'';if(!contentType.toLowerCase().includes('application/json'))throw new Error('Content-Type must be application/json.');const body=await request.json();if(!body||typeof body!=='object'||Array.isArray(body))throw new Error('Request body must be a JSON object.');return body as ReqBody;}
 
+async function generateGeminiNonStreaming(key:string,model:string,prompt:string,baseUrl:string){
+  const controller=new AbortController(); const timeout=setTimeout(()=>controller.abort(),90000);
+  try {
+    const url=`${baseUrl}/v1beta/models/${encodeURIComponent(canonicalModel('gemini',model))}:generateContent`;
+    const upstream=await fetch(url,{method:'POST',headers:headersFor('gemini',key),body:JSON.stringify({contents:[{role:'user',parts:[{text:prompt}]}],generationConfig:{temperature:0.25,topP:0.9,maxOutputTokens:32000}}),cache:'no-store',signal:controller.signal});
+    if(!upstream.ok)return null;
+    const data:any=await upstream.json().catch(()=>null);
+    const text=Array.isArray(data?.candidates?.[0]?.content?.parts)?data.candidates[0].content.parts.map((p:any)=>p?.text||'').join(''):'';
+    if(!text)return null;
+    return new Response(`data: ${JSON.stringify({text})}\n\ndata: [DONE]\n\n`,{status:200,headers:{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache, no-transform','X-Content-Type-Options':'nosniff'}});
+  } catch { return null; } finally { clearTimeout(timeout); }
+}
+
 export async function handle(request:Request){
   if(request.method==='GET')return jsonResponse({ok:true,service:'prd-forge-gateway',runtime:'next-node-route'});
   if(request.method==='OPTIONS'){const headers=corsHeaders(request,{});headers.set('Access-Control-Max-Age','86400');return new Response(null,{status:204,headers});}
@@ -103,13 +123,19 @@ export async function handle(request:Request){
   let body:ReqBody;try{body=await parseBody(request);}catch(error){const message=error instanceof Error?error.message:'Invalid request body.';return jsonResponse({error:message},message.includes('too large')?413:400);}
   const cors=corsHeaders(request,body);if(!originAllowed(request,body))return jsonResponse({error:'Origin not allowed.'},403,cors);if(!withinRateLimit(request))return jsonResponse({error:'Rate limit reached. Try again in a minute.'},429,cors);
   const provider=PROVIDERS.has(body.provider as Provider)?body.provider as Provider:'gemini';
-  const model=typeof body.model==='string'&&body.model.trim()?body.model.trim():provider==='gemini'?'gemini-2.5-flash':provider==='openrouter'?'openrouter/free':'gpt-4o-mini';
+  const model=canonicalModel(provider,typeof body.model==='string'&&body.model.trim()?body.model:provider==='gemini'?'gemini-2.5-flash':provider==='openrouter'?'openrouter/free':'gpt-4o-mini');
   const prompt=typeof body.prompt==='string'?body.prompt.trim():'';
   if(!prompt&&!body.test)return jsonResponse({error:'Prompt is required.'},400,cors);if(prompt.length>MAX_PROMPT_CHARS)return jsonResponse({error:'Prompt is too large.'},413,cors);
   const suppliedKey=typeof body.apiKey==='string'?body.apiKey.trim():'';const keys=suppliedKey?[suppliedKey]:envKeys(provider);if(!keys.length)return jsonResponse({error:`No ${provider} API key configured.`},400,cors);
   let baseUrl:string;try{baseUrl=safeBaseUrl(provider,body.baseUrl);}catch(error){return jsonResponse({error:error instanceof Error?error.message:'Invalid provider endpoint.'},400,cors);}
   if(body.test){let lastHealth:any={ok:false,status:502,health:'no-working-key',modelAvailable:false};for(const key of keys){const health=await checkKey(provider,key,model,baseUrl);if(health.ok)return jsonResponse({...health,provider,model,checkedKeys:keys.length,message:`Key verified and model ${model} is available.`},200,cors);lastHealth=health;}const status=Number(lastHealth.status)||502;return jsonResponse({...lastHealth,provider,model,checkedKeys:keys.length,message:lastHealth.health==='valid-key-model-unavailable'?`API key is valid, but model ${model} is not available. Choose one of the returned models.`:'Key check failed. The key may be invalid/restricted, rate-limited, or the endpoint may be unavailable.'},status>=400&&status<=599?status:502,cors);}
   let lastStatus=502,lastDetail='';
-  for(const key of keys){const spec=requestFor(provider,model,prompt,baseUrl);const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),90000);try{const upstream=await fetch(spec.url,{method:'POST',headers:headersFor(provider,key),body:JSON.stringify(spec.body),cache:'no-store',signal:controller.signal});if(upstream.ok&&upstream.body){clearTimeout(timeout);return streamNormalized(upstream,provider);}lastStatus=upstream.status;const raw=await upstream.text().catch(()=> '');let parsed:any=null;try{parsed=JSON.parse(raw);}catch{}lastDetail=extractProviderDetail(parsed,raw);if(!RETRYABLE.has(lastStatus))break;}catch(error){lastStatus=504;lastDetail=error instanceof Error?error.message:'Upstream request failed.';}finally{clearTimeout(timeout);}}
-  return jsonResponse({error:'All provider attempts failed.',provider,model,status:lastStatus,detail:lastDetail,retryable:RETRYABLE.has(lastStatus)},lastStatus>=400&&lastStatus<=599?lastStatus:502,cors);
+  for(const key of keys){const spec=requestFor(provider,model,prompt,baseUrl);const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),90000);try{const upstream=await fetch(spec.url,{method:'POST',headers:headersFor(provider,key),body:JSON.stringify(spec.body),cache:'no-store',signal:controller.signal});if(upstream.ok&&upstream.body){clearTimeout(timeout);return streamNormalized(upstream,provider);}lastStatus=upstream.status;const raw=await upstream.text().catch(()=> '');let parsed:any=null;try{parsed=JSON.parse(raw);}catch{}lastDetail=extractProviderDetail(parsed,raw);
+      if(provider==='gemini' && (lastStatus===400 || lastStatus===404 || lastStatus===405)) {
+        const fallback=await generateGeminiNonStreaming(key,model,prompt,baseUrl);
+        if(fallback)return fallback;
+      }
+      if(!RETRYABLE.has(lastStatus))break;
+    }catch(error){lastStatus=504;lastDetail=error instanceof Error?error.message:'Upstream request failed.';}finally{clearTimeout(timeout);}}
+  return jsonResponse({error:'All provider attempts failed.',provider,model,status:lastStatus,detail:'Generation could not be completed. The gateway exhausted the available provider attempts.',retryable:RETRYABLE.has(lastStatus)},lastStatus>=400&&lastStatus<=599?lastStatus:502,cors);
 }
