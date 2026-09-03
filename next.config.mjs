@@ -6,7 +6,7 @@ const basePath = isPages ? `/${repoName}` : '';
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  output: 'export',
+  output: isPages ? 'export' : undefined,
   trailingSlash: true,
   basePath,
   assetPrefix: basePath ? `${basePath}/` : undefined,
