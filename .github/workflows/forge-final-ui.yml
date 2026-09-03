@@ -33,15 +33,16 @@ jobs:
           s = s.replace("setDraftHealth(null); }, [provider]);", "setDraftHealth(null); setPendingKey(null); setError(''); }, [provider]);", 1)
 
           pattern = re.compile(r"  async function addKey\(\) \{.*?\n  \}\n  async function testSavedKey", re.S)
-          replacement = r'''  async function checkKey() {
+          replacement = '''  async function checkKey() {
     const secret = keyValue.trim();
     if (!secret) { setError('API key required.'); return; }
     if (!model.trim()) { setError('Model is required for health check.'); return; }
     if (!baseUrl.trim()) { setError('Base URL is required for health check.'); return; }
-    if (!/^https:\\/\\//i.test(baseUrl.trim())) { setError('Base URL must use HTTPS.'); return; }
-    if (provider === 'custom' && baseUrl.includes('your-endpoint.example')) { setError('Enter your real custom endpoint before checking.'); return; }
+    const normalizedUrl = baseUrl.trim().replace(/\\/$/, '');
+    if (!normalizedUrl.toLowerCase().startsWith('https://')) { setError('Base URL must use HTTPS.'); return; }
+    if (provider === 'custom' && normalizedUrl.includes('your-endpoint.example')) { setError('Enter your real custom endpoint before checking.'); return; }
     setError(''); setDraftHealth(null); setPendingKey(null); setStatus('Checking provider, endpoint, API key & model…'); setTestingId('draft');
-    const draft: KeyEntry = { id: uid(), provider, label: keyLabel.trim() || 'Key', key: secret, model: model.trim(), baseUrl: baseUrl.trim().replace(/\\/$/, ''), enabled: true, priority: keys.length + 1, failures: 0, health: 'checking' as const };
+    const draft: KeyEntry = { id: uid(), provider, label: keyLabel.trim() || 'Key', key: secret, model: model.trim(), baseUrl: normalizedUrl, enabled: true, priority: keys.length + 1, failures: 0, health: 'checking' as const };
     try {
       const health = await runHealthCheck(draft);
       const verified: KeyEntry = { ...draft, health: 'valid', lastStatus: 'Verified: authentication + endpoint + selected model' };
@@ -68,14 +69,11 @@ jobs:
               raise SystemExit('addKey function pattern not found')
           s = s2
 
-          # Replace the draft action button without depending on exact styling.
-          old = "onClick={addKey}"
-          if old not in s:
+          if "onClick={addKey}" not in s:
               raise SystemExit('addKey button handler not found')
-          s = s.replace(old, "onClick={pendingKey ? saveVerifiedKey : checkKey}", 1)
+          s = s.replace("onClick={addKey}", "onClick={pendingKey ? saveVerifiedKey : checkKey}", 1)
           s = s.replace("{testingId === 'draft' ? 'Checking…' : 'Check key & add'}", "{testingId === 'draft' ? 'Checking…' : pendingKey ? 'Save verified key' : 'Check API key'}", 1)
 
-          # Insert an explicit verification status block immediately before the draft action button.
           marker = "<button type=\"button\" onClick={pendingKey ? saveVerifiedKey : checkKey}"
           status_block = '''{draftHealth && (
             <div className={`mt-3 rounded-xl border p-3 text-sm ${draftHealth.ok && draftHealth.modelAvailable !== false ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-red-500/30 bg-red-500/5'}`}>
