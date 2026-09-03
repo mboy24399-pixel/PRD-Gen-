@@ -25,7 +25,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund --package-lock=false
@@ -43,7 +42,7 @@ jobs:
         run: |
           test -f out/index.html
           touch out/.nojekyll
-          echo "Static site generated successfully"
+          echo "PRD Forge static site generated successfully"
           find out -maxdepth 2 -type f | head -40
 
       - name: Configure Pages
