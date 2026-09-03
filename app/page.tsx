@@ -5,12 +5,12 @@ import { Activity, BrainCircuit, Check, Copy, Download, FileText, Gauge, KeyRoun
 
 type Provider = 'gemini' | 'openrouter' | 'openai' | 'anthropic' | 'groq' | 'mistral' | 'custom';
 type Mode = 'Quick' | 'Standard' | 'Deep';
-type KeyEntry = { id: string; provider: Provider; label: string; key: string; model: string; baseUrl?: string; enabled: boolean; priority: number; lastStatus?: string; failures: number; health?: 'checking'|'valid'|'invalid'|'limited'|'error' };
+type KeyEntry = { id: string; provider: Provider; label: string; key: string; model: string; baseUrl: string; enabled: boolean; priority: number; lastStatus?: string; failures: number; health?: 'checking'|'valid'|'invalid'|'limited'|'error' };
 type Project = { id: string; title: string; content: string; updatedAt: string; provider: Provider; model: string };
 type HealthResponse = { ok?: boolean; provider?: Provider; model?: string; modelAvailable?: boolean; health?: string; detail?: string; message?: string; status?: number; models?: string[] };
 
 const PROVIDERS: Array<{ id: Provider; name: string; mark: string; defaultModel: string; baseUrl: string }> = [
-  { id: 'gemini', name: 'Google Gemini', mark: 'G', defaultModel: 'gemini-3.7-flash', baseUrl: 'https://generativelanguage.googleapis.com' },
+  { id: 'gemini', name: 'Google Gemini', mark: 'G', defaultModel: 'gemini-2.5-flash', baseUrl: 'https://generativelanguage.googleapis.com' },
   { id: 'openrouter', name: 'OpenRouter', mark: 'OR', defaultModel: 'openrouter/free', baseUrl: 'https://openrouter.ai/api' },
   { id: 'openai', name: 'OpenAI', mark: 'OAI', defaultModel: 'gpt-4o-mini', baseUrl: 'https://api.openai.com/v1' },
   { id: 'anthropic', name: 'Anthropic', mark: 'A', defaultModel: 'claude-3-5-haiku-latest', baseUrl: 'https://api.anthropic.com' },
@@ -69,7 +69,7 @@ export default function Home() {
   async function addKey() {
     const secret = keyValue.trim(); if (!secret) { setError('API key required.'); return; } if (!model.trim()) { setError('Model is required for health check.'); return; } if (provider === 'custom' && !baseUrl.startsWith('https://')) { setError('Custom endpoint must use HTTPS.'); return; }
     setError(''); setDraftHealth(null); setStatus('Checking API key…'); setTestingId('draft');
-    const draft = { provider, label: keyLabel.trim() || 'Key', key: secret, model: model.trim(), baseUrl, enabled: true, priority: keys.length + 1, failures: 0, health: 'checking' as const };
+    const draft: KeyEntry = { id: uid(), provider, label: keyLabel.trim() || 'Key', key: secret, model: model.trim(), baseUrl, enabled: true, priority: keys.length + 1, failures: 0, health: 'checking' as const };
     try { const health = await runHealthCheck(draft); const good: KeyEntry = { ...draft, health: 'valid', lastStatus: health.modelAvailable === false ? 'Valid key; selected model not listed' : 'Valid key + endpoint' }; setDraftHealth(health); setKeys((x) => [...x, good]); setKeyValue(''); setStatus(health.modelAvailable === false ? 'Key valid — check model ID' : 'Key verified and added'); }
     catch (e) { const message = e instanceof Error ? e.message : 'Key health check failed.'; const health = (e as Error & { health?: HealthResponse }).health; setDraftHealth(health || { ok: false, message }); setStatus('Key rejected'); setError(message); }
     finally { setTestingId(null); }
