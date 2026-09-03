@@ -1,5 +1,7 @@
 /** @type {import('next').NextConfig} */
-const isPages = process.env.GITHUB_ACTIONS === 'true';
+// GitHub Actions builds the static GitHub Pages copy. Vercel must always keep
+// the server runtime enabled so /api functions remain available.
+const isPages = process.env.GITHUB_ACTIONS === 'true' && process.env.VERCEL !== '1';
 const repoName = (process.env.GITHUB_REPOSITORY || 'mboy24399-pixel/PRD-Gen-').split('/')[1] || 'PRD-Gen-';
 const basePath = isPages ? `/${repoName}` : '';
 
