@@ -23,3 +23,20 @@ jobs:
           GITHUB_ACTIONS: false
           VERCEL: 1
         run: npm run build
+      - name: Smoke-test production API route
+        env:
+          GITHUB_ACTIONS: false
+          VERCEL: 1
+        run: |
+          npm run start -- -p 3000 > /tmp/prd-forge-next.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID' EXIT
+          for i in {1..20}; do
+            if curl -fsS http://127.0.0.1:3000/api/generate > /tmp/prd-forge-health.json; then
+              break
+            fi
+            sleep 1
+          done
+          cat /tmp/prd-forge-health.json
+          grep -q '"ok":true' /tmp/prd-forge-health.json
+          grep -q 'next-node-route' /tmp/prd-forge-health.json
