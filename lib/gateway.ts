@@ -21,21 +21,61 @@ function corsHeaders(r:Request,b:ReqBody){const o=r.headers.get('origin')||'',c=
 function safeBaseUrl(p:Provider,input?:string){const d:Record<Provider,string>={gemini:'https://generativelanguage.googleapis.com',openrouter:'https://openrouter.ai/api',openai:'https://api.openai.com/v1',anthropic:'https://api.anthropic.com',groq:'https://api.groq.com/openai/v1',mistral:'https://api.mistral.ai/v1',custom:''};const v=(input?.trim()||d[p]).replace(/\/$/,'');if(!v.startsWith('https://')&&!v.startsWith('http://localhost'))throw new Error('Provider endpoint must use HTTPS.');if(p==='custom'){const allowed=(process.env.PRD_FORGE_CUSTOM_DOMAINS||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean);let host='';try{host=new URL(v).hostname.toLowerCase();}catch{throw new Error('Invalid custom endpoint URL.');}if(!allowed.length||!allowed.includes(host))throw new Error('Custom endpoints are locked.');}return v;}
 function headersFor(p:Provider,key:string):Record<string,string>{const c={'Content-Type':'application/json'};if(p==='gemini')return {...c,'x-goog-api-key':key};if(p==='anthropic')return {...c,'x-api-key':key,'anthropic-version':'2023-06-01'};return {...c,Authorization:`Bearer ${key}`};}
 function canonicalModel(p:Provider,m:string){const x=m.trim().replace(/^models\//,'');return p==='gemini'?(x||'gemini-2.5-flash'):x;}
-function modelsUrl(p:Provider,b:string,version='v1beta'){return p==='gemini'?`${b}/${version}/models`:`${b}/models`;}
-function extractDetail(j:any,raw:string){return String(j?.error?.message||j?.message||raw||'Provider rejected the request').replace(/\s+/g,' ').slice(0,500);}
+function modelsUrl(p:Provider,b:string){return p==='gemini'?`${b}/v1beta/models`:`${b}/models`;}
+function extractDetail(j:any,raw:string){return String(j?.error?.message||j?.message||j?.error?.status||raw||'Provider rejected the request').replace(/\s+/g,' ').slice(0,500);}
 
-async function checkKey(p:Provider,key:string,model:string,b:string){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);try{const r=await fetch(modelsUrl(p,b),{headers:headersFor(p,key),cache:'no-store',signal:controller.signal});const raw=await r.text().catch(()=>''),j=(()=>{try{return JSON.parse(raw);}catch{return null;}})();if(!r.ok)return{ok:false,status:r.status,modelAvailable:false,health:r.status===429?'rate-limited-or-quota':r.status===401||r.status===403?'invalid-or-restricted-key':'provider-error',detail:extractDetail(j,raw)};const ids=Array.isArray(j?.models)?j.models.map((x:any)=>String(x?.name||'').replace(/^models\//,'')).filter(Boolean):Array.isArray(j?.data)?j.data.map((x:any)=>String(x?.id||'')).filter(Boolean):[];const m=canonicalModel(p,model),available=!!m&&ids.includes(m);return{ok:available,status:available?200:404,modelAvailable:available,models:ids.slice(0,80),health:available?'valid-model':'valid-key-model-unavailable',detail:available?'':`Selected model ${m} is not available for this API key.`};}catch(e){return{ok:false,status:504,modelAvailable:false,health:'network-or-timeout',detail:e instanceof Error?e.message:'Provider health check failed'};}finally{clearTimeout(timer);}}
+async function checkKey(p:Provider,key:string,model:string,b:string){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);try{
+  const m=canonicalModel(p,model);
+  const url=p==='gemini'?`${b}/v1beta/models/${encodeURIComponent(m)}`:modelsUrl(p,b);
+  const r=await fetch(url,{headers:headersFor(p,key),cache:'no-store',signal:controller.signal});
+  const raw=await r.text().catch(()=>''),j=(()=>{try{return JSON.parse(raw);}catch{return null;}})();
+  if(!r.ok)return{ok:false,status:r.status,modelAvailable:false,health:r.status===429?'rate-limited-or-quota':r.status===401||r.status===403?'invalid-or-restricted-key':'provider-error',detail:extractDetail(j,raw)};
+  if(p==='gemini'){
+    const supported=Array.isArray(j?.supportedGenerationMethods)?j.supportedGenerationMethods.map((x:any)=>String(x)):[];
+    const available=String(j?.name||'').replace(/^models\//,'')===m&&(supported.length===0||supported.includes('generateContent'));
+    return{ok:available,status:available?200:404,modelAvailable:available,models:[m],health:available?'valid-model':'valid-key-model-unavailable',detail:available?'':`Selected model ${m} is not available for text generation.`};
+  }
+  const ids=Array.isArray(j?.data)?j.data.map((x:any)=>String(x?.id||'')).filter(Boolean):Array.isArray(j?.models)?j.models.map((x:any)=>String(x?.name||x?.id||'').replace(/^models\//,'')).filter(Boolean):[];
+  const available=!!m&&ids.includes(m);
+  return{ok:available,status:available?200:404,modelAvailable:available,models:ids.slice(0,80),health:available?'valid-model':'valid-key-model-unavailable',detail:available?'':`Selected model ${m} is not available for this API key.`};
+}catch(e){return{ok:false,status:504,modelAvailable:false,health:'network-or-timeout',detail:e instanceof Error?e.message:'Provider health check failed'};}finally{clearTimeout(timer);}}
 
-function sseResponse(text:string){return new Response(`data: ${JSON.stringify({text})}\n\ndata: [DONE]\n\n`,{status:200,headers:{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache, no-transform','X-Content-Type-Options':'nosniff'}});}
-async function geminiGenerate(key:string,model:string,prompt:string,b:string){const m=encodeURIComponent(canonicalModel('gemini',model));const payload={contents:[{role:'user',parts:[{text:prompt}]}],generationConfig:{temperature:0.25,topP:0.9,maxOutputTokens:32000}};const versions=['v1','v1beta'];for(const v of versions){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),90000);try{const r=await fetch(`${b}/${v}/models/${m}:generateContent`,{method:'POST',headers:headersFor('gemini',key),body:JSON.stringify(payload),cache:'no-store',signal:controller.signal});const raw=await r.text().catch(()=>''),j=(()=>{try{return JSON.parse(raw);}catch{return null;}})();if(r.ok){const text=Array.isArray(j?.candidates?.[0]?.content?.parts)?j.candidates[0].content.parts.map((x:any)=>x?.text||'').join(''):'';if(text)return sseResponse(text);}if(r.status!==404&&r.status!==405&&!RETRYABLE.has(r.status))return null;}catch{}finally{clearTimeout(timer);}}
-return null;}
-
-async function streamProvider(p:Provider,key:string,model:string,prompt:string,b:string){const m=canonicalModel(p,model);let url:string,body:any;if(p==='gemini'){url=`${b}/v1beta/models/${encodeURIComponent(m)}:streamGenerateContent?alt=sse`;body={contents:[{role:'user',parts:[{text:prompt}]}],generationConfig:{temperature:0.25,topP:0.9,maxOutputTokens:32000}};}else if(p==='anthropic'){url=`${b}/v1/messages`;body={model:m,max_tokens:32000,temperature:0.25,stream:true,messages:[{role:'user',content:prompt}]};}else{url=`${b}/chat/completions`;body={model:m,temperature:0.25,top_p:0.9,max_tokens:32000,stream:true,messages:[{role:'user',content:prompt}]};}const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),90000);try{const r=await fetch(url,{method:'POST',headers:headersFor(p,key),body:JSON.stringify(body),cache:'no-store',signal:controller.signal});if(!r.ok)return{response:null,status:r.status};if(!r.body)return{response:null,status:502};const reader=r.body.getReader(),decoder=new TextDecoder(),encoder=new TextEncoder();let buffer='';const stream=new ReadableStream<Uint8Array>({async pull(c){try{const {value,done}=await reader.read();buffer+=decoder.decode(value||new Uint8Array(),{stream:!done});const events=buffer.split(/\r?\n\r?\n/);buffer=events.pop()||'';for(const ev of events){for(const line of ev.split(/\r?\n/)){if(!line.startsWith('data:'))continue;const d=line.slice(5).trim();if(!d||d==='[DONE]')continue;try{const j=JSON.parse(d);const text=p==='gemini'?(j?.candidates?.[0]?.content?.parts||[]).map((x:any)=>x?.text||'').join(''):p==='anthropic'?(j?.type==='content_block_delta'?j?.delta?.text||'':''):j?.choices?.[0]?.delta?.content||'';if(text)c.enqueue(encoder.encode(`data: ${JSON.stringify({text})}\n\n`));}catch{}}}if(done){c.enqueue(encoder.encode('data: [DONE]\n\n'));c.close();}}catch(e){c.error(e);}} ,cancel(){reader.cancel().catch(()=>undefined);}});return{response:new Response(stream,{status:200,headers:{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache, no-transform','X-Content-Type-Options':'nosniff'}}),status:200};}catch{return{response:null,status:504};}finally{clearTimeout(timer);}}
+async function streamProvider(p:Provider,key:string,model:string,prompt:string,b:string){const m=canonicalModel(p,model);let url:string,body:any;
+  if(p==='gemini'){
+    url=`${b}/v1beta/models/${encodeURIComponent(m)}:streamGenerateContent?alt=sse`;
+    body={contents:[{role:'user',parts:[{text:prompt}]}],generationConfig:{temperature:0.25,topP:0.9,maxOutputTokens:16000}};
+  }else if(p==='anthropic'){
+    url=`${b}/v1/messages`;
+    body={model:m,max_tokens:16000,temperature:0.25,stream:true,messages:[{role:'user',content:prompt}]};
+  }else{
+    url=`${b}/chat/completions`;
+    body={model:m,temperature:0.25,top_p:0.9,max_tokens:16000,stream:true,messages:[{role:'user',content:prompt}]};
+  }
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),150000);
+  try{
+    const r=await fetch(url,{method:'POST',headers:headersFor(p,key),body:JSON.stringify(body),cache:'no-store',signal:controller.signal});
+    if(!r.ok){const raw=await r.text().catch(()=>''),j=(()=>{try{return JSON.parse(raw);}catch{return null;}})();return{response:null,status:r.status,detail:extractDetail(j,raw)};}
+    if(!r.body)return{response:null,status:502,detail:'Provider returned an empty response stream.'};
+    const reader=r.body.getReader(),decoder=new TextDecoder(),encoder=new TextEncoder();let buffer='';
+    const stream=new ReadableStream<Uint8Array>({async pull(c){try{
+      const {value,done}=await reader.read();
+      buffer+=decoder.decode(value||new Uint8Array(),{stream:!done});
+      const events=buffer.split(/\r?\n\r?\n/);buffer=events.pop()||'';
+      for(const ev of events){for(const line of ev.split(/\r?\n/)){
+        if(!line.startsWith('data:'))continue;const d=line.slice(5).trim();if(!d||d==='[DONE]')continue;
+        try{const j=JSON.parse(d);const text=p==='gemini'?(j?.candidates?.[0]?.content?.parts||[]).map((x:any)=>x?.text||'').join(''):p==='anthropic'?(j?.type==='content_block_delta'?j?.delta?.text||'':''):j?.choices?.[0]?.delta?.content||'';if(text)c.enqueue(encoder.encode(`data: ${JSON.stringify({text})}\n\n`));}catch{}
+      }}
+      if(done){c.enqueue(encoder.encode('data: [DONE]\n\n'));c.close();}
+    }catch(e){c.error(e);}} ,cancel(){reader.cancel().catch(()=>undefined);}});
+    return{response:new Response(stream,{status:200,headers:{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache, no-transform','X-Content-Type-Options':'nosniff','X-Accel-Buffering':'no'}}),status:200,detail:''};
+  }catch(e){return{response:null,status:504,detail:e instanceof Error?e.message:'Provider request timed out.'};}
+  finally{clearTimeout(timer);}
+}
 
 async function parseBody(r:Request):Promise<ReqBody>{const n=Number(r.headers.get('content-length')||0);if(n>MAX_BODY_BYTES)throw new Error('Request body is too large.');const ct=r.headers.get('content-type')||'';if(!ct.toLowerCase().includes('application/json'))throw new Error('Content-Type must be application/json.');const b=await r.json();if(!b||typeof b!=='object'||Array.isArray(b))throw new Error('Request body must be a JSON object.');return b as ReqBody;}
 
 export async function handle(request:Request){
-  if(request.method==='GET')return jsonResponse({ok:true,service:'prd-forge-gateway',runtime:'next-node-route',version:'gemini-stable-fallback-2'});
+  if(request.method==='GET')return jsonResponse({ok:true,service:'prd-forge-gateway',runtime:'next-node-route',version:'stream-first-3'});
   if(request.method==='OPTIONS'){const h=corsHeaders(request,{});h.set('Access-Control-Max-Age','86400');return new Response(null,{status:204,headers:h});}
   if(request.method!=='POST')return jsonResponse({error:'Method not allowed.'},405,{Allow:'GET, POST, OPTIONS'});
   let body:ReqBody;try{body=await parseBody(request);}catch(e){return jsonResponse({error:e instanceof Error?e.message:'Invalid request body.'},400);}
@@ -46,8 +86,7 @@ export async function handle(request:Request){
   const supplied=typeof body.apiKey==='string'?body.apiKey.trim():'';const keys=supplied?[supplied]:envKeys(provider);if(!keys.length)return jsonResponse({error:`No ${provider} API key configured.`},400,cors);
   let base:string;try{base=safeBaseUrl(provider,body.baseUrl);}catch(e){return jsonResponse({error:e instanceof Error?e.message:'Invalid provider endpoint.'},400,cors);}
   if(body.test){let last:any={ok:false,status:502,health:'no-working-key'};for(const key of keys){const h=await checkKey(provider,key,model,base);if(h.ok)return jsonResponse({...h,provider,model,checkedKeys:keys.length,message:`Key verified and model ${model} is available.`},200,cors);last=h;}const st=Number(last.status)||502;return jsonResponse({...last,provider,model,checkedKeys:keys.length,message:last.detail||'Key verification failed.'},st>=400&&st<=599?st:502,cors);}
-  let lastStatus=502;
-  for(const key of keys){if(provider==='gemini'){const direct=await geminiGenerate(key,model,prompt,base);if(direct)return direct;}
-    const streamed=await streamProvider(provider,key,model,prompt,base);if(streamed.response)return streamed.response;lastStatus=streamed.status;if(!RETRYABLE.has(lastStatus))break;}
-  return jsonResponse({error:'Generation could not be completed.',provider,model,status:lastStatus,retryable:RETRYABLE.has(lastStatus),message:'The gateway tried the configured provider routes and safe fallbacks. No raw provider HTML was returned to the editor.'},502,cors);
+  let lastStatus=502,lastDetail='No provider route succeeded.';
+  for(const key of keys){const streamed=await streamProvider(provider,key,model,prompt,base);if(streamed.response)return streamed.response;lastStatus=streamed.status;lastDetail=streamed.detail||lastDetail;if(!RETRYABLE.has(lastStatus))break;}
+  return jsonResponse({error:'Generation could not be completed.',provider,model,status:lastStatus,retryable:RETRYABLE.has(lastStatus),detail:lastDetail},502,cors);
 }
