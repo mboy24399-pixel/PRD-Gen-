@@ -10,27 +10,34 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm install --no-audit --no-fund
-      - run: npm run typecheck
-      - name: Build application
+          cache: npm
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund --package-lock=false
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build static application
         env:
           GITHUB_ACTIONS: false
           VERCEL: 1
         run: npm run build
-      - name: Smoke-test production page
-        env:
-          GITHUB_ACTIONS: false
-          VERCEL: 1
+      - name: Smoke-test static output
         run: |
-          npm run start -- -p 3000 > /tmp/prd-forge-next.log 2>&1 &
+          test -f out/index.html
+          test -s out/index.html
+          grep -q 'PRD Forge' out/index.html
+          touch out/.nojekyll
+          cd out
+          python3 -m http.server 4173 >/tmp/prd-forge-static.log 2>&1 &
           SERVER_PID=$!
           trap 'kill $SERVER_PID' EXIT
           for i in {1..20}; do
-            if curl -fsSL http://127.0.0.1:3000/ > /tmp/prd-forge-home.html; then break; fi
+            if curl -fsSL http://127.0.0.1:4173/ > /tmp/prd-forge-home.html; then break; fi
             sleep 1
           done
           test -s /tmp/prd-forge-home.html
