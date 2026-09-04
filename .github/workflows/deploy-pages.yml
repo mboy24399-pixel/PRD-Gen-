@@ -25,20 +25,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund --package-lock=false
 
       - name: Typecheck
         run: npm run typecheck
-
-      # GitHub Pages is a static host. Keep the production Next.js API route
-      # in the repository for Vercel, but exclude it only from this static build.
-      - name: Exclude server routes from Pages build
-        run: |
-          if [ -d app/api ]; then
-            mv app/api /tmp/prd-forge-app-api
-          fi
 
       - name: Build static site
         env:
@@ -50,8 +43,8 @@ jobs:
         run: |
           test -f out/index.html
           touch out/.nojekyll
+          test -s out/index.html
           echo "PRD Forge static site generated successfully"
-          find out -maxdepth 2 -type f | head -40
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
